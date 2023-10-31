@@ -1,0 +1,73 @@
+name: Auto Build Latest DERP
+
+on:
+  push:
+  workflow_dispatch: 
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  build:
+    name: Build Docker image and push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v2
+
+      - name: Login Registry
+        uses: docker/login-action@v1
+        with: 
+          registry: registry.cn-shanghai.aliyuncs.com
+          username: ${{ secrets.ALIYUN_USER }}
+          password: ${{ secrets.ALIYUN_PASSWORD }}
+
+      - name: Check version
+        id: check-version
+        run: |
+          docker pull ghcr.io/tailscale/tailscale:latest
+          REMOTE_VER=$(docker inspect ghcr.io/tailscale/tailscale | grep -oE "\"Id\": \"sha256:([0-9a-f]+)\"" | sed "s/\"Id\": \"sha256://g" | sed "s/\"//g")
+          CURRENT_VER=$(cat current_ver)
+          echo "Remote Latest Verion is SHA256:$REMOTE_VER"
+          echo "Current built verion is SHA256:$CURRENT_VER"
+          if [ "$REMOTE_VER" != "$CURRENT_VER" ];then
+            echo $REMOTE_VER > current_ver
+            echo "build=true" >> $GITHUB_OUTPUT
+            echo "push=true" >> $GITHUB_OUTPUT
+            echo "version=$REMOTE_VER" >> $GITHUB_OUTPUT
+            echo "Version is outdated, build latest version..."
+          else
+            echo "Version is latest."
+          fi
+
+      - name: Build Image and Push
+        if: ${{ steps.check-version.outputs.build == 'true' }}
+        run: |
+          echo "Build Latest Version Right now: "
+          docker build . -t registry.cn-shanghai.aliyuncs.com/evalexp-private/tailscale-derper:${{steps.check-version.outputs.version}}
+          docker tag registry.cn-shanghai.aliyuncs.com/evalexp-private/tailscale-derper:${{steps.check-version.outputs.version}} registry.cn-shanghai.aliyuncs.com/evalexp-private/tailscale-derper:latest
+          docker push registry.cn-shanghai.aliyuncs.com/evalexp-private/tailscale-derper:${{steps.check-version.outputs.version}}
+          docker push registry.cn-shanghai.aliyuncs.com/evalexp-private/tailscale-derper:latest
+          echo "Build done."
+
+      - name: Commits files
+        if: ${{ steps.check-version.outputs.push == 'true' }}
+        run: |
+          echo "Update repo version file..."
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          git commit -m "Update tailscale version to SHA256:${{steps.check-version.outputs.version}}"
+          echo "File has been committed"
+
+      - name: Push changes
+        if: ${{ steps.check-version.outputs.push == 'true' }}
+        uses: ad-m/github-push-action@master
+        with: 
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref }}
+      
+      - name: Done
+        if: ${{ steps.check-version.outputs.push == 'true' }}
+        run: |
+          echo "Changes have been push to repo."
