@@ -1,4 +1,4 @@
-FROM golang:1.21.1 as builder
+FROM golang:latest as builder
 RUN go install tailscale.com/cmd/derper@main
 
 FROM ghcr.io/tailscale/tailscale:latest
